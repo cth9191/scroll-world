@@ -1,5 +1,9 @@
 # scroll-world
 
+
+https://github.com/user-attachments/assets/b08e641e-985b-4bd4-83ff-6750272d0c37
+
+
 A Claude Code skill that builds an immersive, **scroll-scrubbed "fly through the world"
 landing page** for any industry or brand — the kind where, as you scroll, a camera flies
 from *outside* each scene *into* its interior, then flows on to the next scene with **no
