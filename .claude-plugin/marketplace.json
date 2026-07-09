@@ -1,16 +1,16 @@
 {
   "$schema": "https://anthropic.com/claude-code/marketplace.schema.json",
   "name": "scroll-world",
-  "description": "Immersive scroll-scrubbed 'fly through the world' landing pages, generated with Higgsfield.",
+  "description": "Immersive scroll-scrubbed 'fly through the world' landing pages, generated with Higgsfield. Hardened fork of oso95/scroll-world: budget tiers, spend gates, SSIM seam verification, mobile tiers, SEO.",
   "owner": {
-    "name": "cyw",
-    "email": "cyw@cywang.me"
+    "name": "Chase Hannegan",
+    "email": "hanneganc@gmail.com"
   },
   "plugins": [
     {
       "name": "scroll-world",
       "source": "./plugins/scroll-world",
-      "description": "Build an immersive scroll-scrubbed landing page where a pre-rendered camera flies from outside each scene into its interior, then flows on to the next with no cuts. Interviews the user for topic, story beats, and brand kit; generates cohesive scenes + seamless camera clips with Higgsfield; wires a portable, framework-agnostic scrub engine.",
+      "description": "Build an immersive scroll-scrubbed landing page where a pre-rendered camera flies from outside each scene into its interior, then flows on to the next with no cuts. Interviews the user for topic, story beats, brand kit, budget tier, and mobile tier; generates cohesive scenes + seamless camera clips with Higgsfield behind approval gates; verifies every seam with an SSIM check; wires a portable, framework-agnostic scrub engine.",
       "category": "design"
     }
   ]

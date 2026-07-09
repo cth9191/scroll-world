@@ -23,18 +23,19 @@ logistics site, applied to whatever you want).
 ### As a plugin (recommended)
 
 ```
-/plugin marketplace add oso95/scroll-world
+/plugin marketplace add cth9191/scroll-world
 /plugin install scroll-world@scroll-world
 ```
 
 Then just ask for a scroll-through world landing page, or invoke `/scroll-world`.
+(For the original, unhardened version: `/plugin marketplace add oso95/scroll-world`.)
 
 ### Manually (drop-in skill)
 
 Copy the skill folder into your Claude Code skills directory:
 
 ```bash
-git clone https://github.com/oso95/scroll-world
+git clone https://github.com/cth9191/scroll-world
 cp -R scroll-world/plugins/scroll-world/skills/scroll-world ~/.claude/skills/
 ```
 
@@ -57,10 +58,17 @@ drops into plain HTML, Next.js, Vue, or a Python-served page — nothing assumes
 When invoked, the skill:
 
 1. **Interviews you** — the subject/industry + pitch, a brand kit (import from a URL, hand
-   it over, or have it proposed), art direction, and the ordered scenes the camera visits.
-2. **Generates the assets** with Higgsfield — one still per scene, one "dive-in" camera
-   clip per scene, and the **connector** clips that join consecutive scenes.
-3. **Wires it up** — a config-driven scroll engine that plays the whole chain as one flight.
+   it over, or have it proposed), art direction, **a budget tier** (lean ~8 generations /
+   standard ~11–14 / showcase 17+ — scene count and camera architecture follow from it),
+   the ordered scenes the camera visits, and a **mobile tier** (crop-safe → full 9:16
+   portrait chain). It closes with a spend estimate you approve before anything generates.
+2. **Generates the assets** with Higgsfield, gated so credits aren't wasted — ONE anchor
+   still first (you approve the art direction, then the rest batch style-locked), a cheap
+   **previz pass** of the whole chain on the draft model for bigger runs, then the final
+   dive/leg clips and the **connector** clips that join consecutive scenes.
+3. **Verifies and wires it up** — posters extracted from the encoded clips, an automated
+   **SSIM seam check** on every join, then a config-driven scroll engine that plays the
+   whole chain as one flight.
 
 ### The part that makes it good
 
@@ -68,29 +76,37 @@ The scenes connect **seamlessly** because each connector clip is generated with 
 *actual rendered frames* of its neighbours as its start/end images (not the original
 stills — those re-render slightly differently and would pop at the seam). Both sides of
 every seam end up frame-identical, so the camera never cuts. This is baked into the skill
-as the central rule.
+as the central rule — and machine-enforced: an SSIM gate scores every seam from the
+encoded files before the page ever opens in a browser.
 
 It also captures the non-obvious production gotchas: blob-URL loading so scrubbing works on
 hosts that don't serve HTTP byte-range requests, GOP/encoding settings that stay sharp
-without bloating, and Higgsfield's quirks.
+without bloating, an iOS Low Power Mode stills fallback, device-class clip tiering
+(phones get 720p tight-GOP encodes, iPads and desktops the 1080p master), data-saver
+handling, a crawlable SEO copy block, and Higgsfield's quirks.
 
 ## What's in the skill
 
 ```
 skills/scroll-world/
-├── SKILL.md                    the procedure + the seam rule + gotchas
+├── SKILL.md                    the procedure + budget/mobile tiers + the seam rule
 └── references/
     ├── prompts.md              intake checklist + every Higgsfield prompt template
-    ├── pipeline.md             copy-paste batch scripts (generate → frames → connectors → encode)
-    ├── scrub-engine.js         portable, config-driven scrub engine (blob-seek, lazy load, seam crossfade)
-    ├── index-template.html     a minimal standalone page that mounts the engine
+    ├── pipeline.md             idempotent batch scripts (anchor-gated stills → previz →
+    │                           dives → connectors → encode → posters → SSIM seam gate)
+    ├── scrub-engine.js         portable, config-driven scrub engine (blob-seek, lazy load,
+    │                           seam crossfade, device-class tiering, LPM/data-saver fallbacks)
+    ├── index-template.html     a minimal standalone page that mounts the engine (+ SEO block)
+    ├── gotchas.md              full symptom → cause → fix list + frame-sequence upgrade path
     └── knockout.py             background knockout for floating scenes
 ```
 
 ## Notes
 
-- Asset generation costs Higgsfield credits (~N image gens + ~2N-1 video gens for N scenes)
-  and takes a while — the skill runs generations in the background and polls.
+- Asset generation costs Higgsfield credits — the budget tier sets the bill: lean ≈ 8
+  generations (4 scenes, N videos), standard ≈ 11–14, showcase ≈ 17+ (N stills + 2N-1
+  videos), plus a re-roll buffer. Generation takes a while — the skill runs them in the
+  background and polls, and every step is resumable (finished assets are never re-paid).
 - The generated `.mp4`/`.webp` assets are produced per project; they're not shipped here.
 
 ## License
