@@ -18,7 +18,7 @@
                                  // viewports read the same flight as faster; industry
                                  // pattern is a LONGER mobile scroll run)
        sections: [
-         { id, label, still, poster, posterMobile, clip, clipMobile, accent,
+         { id, label, still, poster, posterMobile, clip, clipMobile, audio, accent,
                           // `poster` = the EXTRACTED FIRST FRAME of the encoded clip
                           // (pipeline.md §5b). Shown while the clip loads, so the
                           // still→video swap is pixel-identical (no crop/render pop).
@@ -77,6 +77,32 @@
      mount and it never fights the visual layer, but it exists in the served HTML for
      crawlers, link previews, and no-JS visitors (see index-template.html).
 
+   CONVERSION (all opt-in — omit any block and the page behaves exactly as before;
+   full setup + GHL/GA4/ElevenLabs recipes in references/integrations.md)
+     analytics: { ga4:'G-XXXXXXX' | true, prefix:'sw_', debug:false, params:{} }
+        Emits flight events to gtag() — or window.dataLayer (GTM) if gtag is absent:
+          sw_scene_view     {scene_index, scene_id, scene_label}
+          sw_scroll_depth   {percent: 25|50|75|100}      // whole-flight depth, once each
+          sw_flight_complete{}                            // reached the end once
+          sw_cta_click      {scene_index, label, href}
+          sw_lead_submit    {source}                      // inline capture success
+        Pass ga4:'G-…' to have the engine inject gtag for you; pass true if you already
+        placed the GA4 / GTM snippet in <head>. These map onto validation gates:
+        completion = flight_complete rate, engagement = cta_click / lead_submit rate.
+     capture: {                       // turns the FINALE from a dead CTA into real capture
+        heading, note, submitLabel, thankYou, redirect,
+        mode:'embed',  embedUrl:'https://…', height:620        // a GHL form / booking iframe
+        // — or —
+        mode:'inline', webhookUrl:'https://…/ghl-inbound-webhook',
+        source:'scroll-world',                                 // tag → your pipeline
+        fields:[{name,label,type,required}]                    // POSTs JSON + UTM, honeypot-guarded
+     }                                // NEVER put a GHL API key here — the webhook URL is the
+                                      // only credential and it is a public inbound endpoint.
+     audio: { unmuteLabel:'Play sound', onLabel:'Mute', gain:1 }   // + per-section `audio:'…mp3'`
+        Muted until the visitor taps unmute (autoplay policy); each scene's volume then
+        tracks its opacity, so narration cross-fades with the flight. Never plays under
+        prefers-reduced-motion or data-saver.
+
    REQUIREMENTS ON YOUR ASSETS
      - clips encoded native-res, crf~20, -g 8, +faststart, no audio (see pipeline.md)
      - connectors' endpoints are the neighbouring dives' ACTUAL frames (see SKILL Step 5)
@@ -116,6 +142,14 @@ function mountScrollWorld(container, config) {
   const DIVE_W = config.diveScroll || 1.3;
   const CONN_W = config.connScroll || 0.9;
   const CROSSFADE = (config.crossfade != null) ? config.crossfade : 0.12;  // seam dissolve width (vh)
+  // ---- opt-in integrations (all default null/off; a base config is untouched) ----
+  const AN  = config.analytics || null;      // GA4 / dataLayer flight events
+  const CAP = config.capture || null;        // lead-capture panel on the finale
+  const AUD = config.audio || null;          // per-section scroll-faded audio
+  const audioAllowed = !!AUD && !reduce && !dataSaver;  // never over reduced-motion / data-saver
+  let audioOn = false;                       // flips true only on an explicit unmute tap
+  const firedDepth = {};                     // scroll_depth thresholds already sent
+  let firedComplete = false;
   const N = SECTIONS.length;
   if (!N) return;
 
@@ -129,7 +163,7 @@ function mountScrollWorld(container, config) {
   const SEGMENTS = [];
   SECTIONS.forEach((s, i) => {
     const dive = { kind: 'dive', si: i, clip: s.clip, clipM: s.clipMobile, still: s.still,
-                   poster: s.poster, posterM: s.posterMobile,
+                   poster: s.poster, posterM: s.posterMobile, audio: s.audio,
                    accent: s.accent, w: s.scroll || DIVE_W, linger: s.linger || 0 };
     SEGMENTS.push(dive);
     s._seg = dive;
@@ -193,6 +227,14 @@ function mountScrollWorld(container, config) {
     scene.appendChild(img); stage.appendChild(scene);
     s.el = scene; s.img = img; s.video = null; s.hasClip = false;
     s.loading = false; s.ready = false; s.cur = 0; s.target = 0; s.visible = false;
+    // Per-scene audio (opt-in): preload:none so nothing hits the network until the
+    // visitor taps unmute. Volume is driven by this scene's opacity in read(), so
+    // narration cross-fades with the flight. Only dive segments carry audio.
+    s.audioEl = null;
+    if (audioAllowed && s.kind === 'dive' && s.audio) {
+      const a = new Audio(); a.src = s.audio; a.preload = 'none'; a.loop = true; a.volume = 0;
+      a.muted = false; s.audioEl = a;
+    }
   });
 
   // per-section copy / route / nav
@@ -217,6 +259,20 @@ function mountScrollWorld(container, config) {
       b.addEventListener('click', () => jumpTo(i)); nav.appendChild(b);
     }
   });
+
+  // ---- conversion wiring: analytics init, CTA tracking, lead capture, audio toggle ----
+  if (AN && typeof AN.ga4 === 'string' && !window.gtag) initGA4(AN.ga4);
+  if (AN) {
+    copies.forEach((c, i) => c.querySelectorAll('a.sw-btn').forEach(a =>
+      a.addEventListener('click', () => emit('cta_click', {
+        scene_index: i, scene_id: SECTIONS[i].id || '',
+        label: a.textContent || '', href: a.getAttribute('href') || '' }))));
+    const tc = topbar.querySelector('.sw-topcta');
+    if (tc) tc.addEventListener('click', () => emit('cta_click', {
+      scene_index: -1, label: tc.textContent || '', href: tc.getAttribute('href') || '' }));
+  }
+  if (CAP) buildCapture();
+  if (audioAllowed) buildAudioToggle();
 
   // ---- math ----
   const clamp = (x, a = 0, b = 1) => Math.min(b, Math.max(a, x));
@@ -304,6 +360,7 @@ function mountScrollWorld(container, config) {
       if (y < s.start) outside = s.start - y; else if (y > s.end) outside = y - s.end;
       const op = smooth(1 - outside / fade);
       s.el.style.opacity = op; s.visible = op > 0.001;
+      if (audioOn && s.audioEl) setSceneAudio(s, op);
       s.el.style.zIndex = (i === ci) ? '120' : String(100 + Math.round(op * 10));
       if (!s.hasClip || !s.ready) {
         const sc = reduce ? 1 : 1.03 + local * 0.14;
@@ -333,8 +390,14 @@ function mountScrollWorld(container, config) {
       dots.forEach((d, k) => d.classList.toggle('is-active', k === near));
       nav.querySelectorAll('.sw-nav__item').forEach((n, k) => n.classList.toggle('is-active', k === near));
       container.style.setProperty('--sw-accent', SECTIONS[near].accent || '');
+      emit('scene_view', { scene_index: near, scene_id: SECTIONS[near].id || '', scene_label: SECTIONS[near].label || '' });
     }
-    scrollbarFill.style.transform = `scaleX(${clamp(y / (totalW * vh))})`;
+    const prog = clamp(y / (totalW * vh));
+    if (AN) {
+      [25, 50, 75, 100].forEach(t => { if (!firedDepth[t] && prog * 100 >= t) { firedDepth[t] = 1; emit('scroll_depth', { percent: t }); } });
+      if (!firedComplete && prog >= 0.99) { firedComplete = true; emit('flight_complete', {}); }
+    }
+    scrollbarFill.style.transform = `scaleX(${prog})`;
     hint.style.opacity = clamp(1 - y / (0.5 * vh));
     if (particles) particles.style.transform = `translate3d(0, ${-y * 0.05}px, 0)`;
     ticking = false;
@@ -408,6 +471,121 @@ function mountScrollWorld(container, config) {
     if (cta.secondary) h += `<a class="sw-btn sw-btn--ghost" href="${esc(cta.secondary.href || '#')}">${esc(cta.secondary.label)}</a>`;
     return h;
   }
+
+  // ---- analytics (opt-in) ----
+  function emit(event, params) {
+    if (!AN) return;
+    const name = (AN.prefix != null ? AN.prefix : 'sw_') + event;
+    const payload = Object.assign({}, AN.params || {}, params || {});
+    try {
+      if (typeof window.gtag === 'function') window.gtag('event', name, payload);
+      else { window.dataLayer = window.dataLayer || []; window.dataLayer.push(Object.assign({ event: name }, payload)); }
+      if (AN.debug) console.log('[sw]', name, payload);
+    } catch (e) {}
+  }
+  function initGA4(id) {
+    const s = document.createElement('script'); s.async = true;
+    s.src = 'https://www.googletagmanager.com/gtag/js?id=' + encodeURIComponent(id);
+    document.head.appendChild(s);
+    window.dataLayer = window.dataLayer || [];
+    window.gtag = function () { window.dataLayer.push(arguments); };
+    window.gtag('js', new Date());
+    window.gtag('config', id);
+  }
+  function utm() {
+    const out = {}, p = new URLSearchParams(location.search);
+    ['utm_source', 'utm_medium', 'utm_campaign', 'utm_term', 'utm_content', 'gclid', 'fbclid']
+      .forEach(k => { const v = p.get(k); if (v) out[k] = v; });
+    return out;
+  }
+
+  // ---- per-scene audio: volume follows the scene's opacity, so it cross-fades ----
+  function setSceneAudio(s, op) {
+    const a = s.audioEl; if (!a) return;
+    a.volume = clamp(op) * (AUD.gain != null ? AUD.gain : 1);
+    if (op > 0.02) { if (a.paused) { const p = a.play(); if (p && p.catch) p.catch(() => {}); } }
+    else if (!a.paused) { try { a.pause(); } catch (e) {} }
+  }
+  function buildAudioToggle() {
+    const btn = el('button', 'sw-audio'); btn.type = 'button'; btn.setAttribute('aria-pressed', 'false');
+    btn.textContent = AUD.unmuteLabel || 'Play sound';
+    btn.addEventListener('click', () => {
+      audioOn = !audioOn;
+      btn.setAttribute('aria-pressed', String(audioOn));
+      btn.textContent = audioOn ? (AUD.onLabel || 'Mute') : (AUD.unmuteLabel || 'Play sound');
+      if (!audioOn) SEGMENTS.forEach(s => { if (s.audioEl && !s.audioEl.paused) { try { s.audioEl.pause(); } catch (e) {} } });
+      else read();   // re-evaluate volumes/plays for the current scroll position
+      emit('audio_toggle', { on: audioOn });
+    });
+    container.appendChild(btn);
+  }
+
+  // ---- lead capture on the finale (opt-in) ----
+  function buildCapture() {
+    const last = copies[N - 1]; if (!last) return;
+    const wrap = el('div', 'sw-capture');
+    if (CAP.heading) { const h = el('div', 'sw-capture__h'); h.textContent = CAP.heading; wrap.appendChild(h); }
+    if (CAP.note) { const p = el('div', 'sw-capture__note'); p.textContent = CAP.note; wrap.appendChild(p); }
+    if (CAP.mode === 'embed' && CAP.embedUrl) {
+      const f = el('iframe', 'sw-capture__frame');
+      f.src = CAP.embedUrl; f.loading = 'lazy'; f.setAttribute('title', CAP.heading || 'Get started');
+      f.style.height = (CAP.height || 620) + 'px';
+      wrap.appendChild(f);
+    } else if (CAP.mode === 'inline' && CAP.webhookUrl) {
+      wrap.appendChild(buildInlineForm());
+    }
+    const ctaArea = last.querySelector('.sw-copy__cta');
+    if (ctaArea) ctaArea.parentNode.insertBefore(wrap, ctaArea);
+    else last.appendChild(wrap);
+  }
+  function buildInlineForm() {
+    const fields = CAP.fields || [
+      { name: 'name', label: 'Name', type: 'text', required: true },
+      { name: 'email', label: 'Email', type: 'email', required: true },
+      { name: 'phone', label: 'Phone', type: 'tel', required: false },
+    ];
+    const form = el('form', 'sw-capture__form'); form.setAttribute('novalidate', '');
+    fields.forEach(fl => {
+      const inp = el('input', 'sw-capture__input');
+      inp.name = fl.name; inp.type = fl.type || 'text'; inp.placeholder = fl.label || fl.name;
+      inp.autocomplete = fl.name === 'email' ? 'email' : (fl.name === 'phone' ? 'tel' : 'on');
+      if (fl.required) inp.required = true;
+      form.appendChild(inp);
+    });
+    // Honeypot — bots fill it, humans never see it. A filled value silently drops.
+    const hp = el('input'); hp.type = 'text'; hp.name = 'company_url'; hp.tabIndex = -1; hp.autocomplete = 'off';
+    hp.style.cssText = 'position:absolute;left:-9999px;width:1px;height:1px;opacity:0;';
+    form.appendChild(hp);
+    const btn = el('button', 'sw-btn sw-btn--primary'); btn.type = 'submit';
+    btn.textContent = CAP.submitLabel || (config.cta && config.cta.label) || 'Get started';
+    form.appendChild(btn);
+    const msg = el('div', 'sw-capture__msg'); form.appendChild(msg);
+    form.addEventListener('submit', (e) => {
+      e.preventDefault();
+      if (hp.value) return;   // honeypot tripped
+      const data = {};
+      fields.forEach(fl => { const n = form.querySelector('[name="' + fl.name + '"]'); if (n) data[fl.name] = n.value.trim(); });
+      for (const fl of fields) if (fl.required && !data[fl.name]) { msg.textContent = 'Please add your ' + (fl.label || fl.name).toLowerCase() + '.'; return; }
+      Object.assign(data, {
+        source: CAP.source || 'scroll-world',
+        brand: (config.brand && config.brand.name) || '',
+        page: location.href, referrer: document.referrer || '',
+      }, utm());
+      btn.disabled = true; btn.textContent = CAP.submittingLabel || 'Sending…';
+      // GHL inbound webhooks are public POST endpoints; the response is CORS-opaque, so
+      // we fire-and-trust and confirm receipt in the GHL workflow. No API key lives here.
+      fetch(CAP.webhookUrl, { method: 'POST', mode: 'no-cors', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(data) })
+        .then(done).catch(done);
+      function done() {
+        emit('lead_submit', { source: data.source });
+        form.innerHTML = '';
+        const ok = el('div', 'sw-capture__ok'); ok.textContent = CAP.thankYou || "Got it — we'll be in touch shortly.";
+        form.appendChild(ok);
+        if (CAP.redirect) setTimeout(() => { location.href = CAP.redirect; }, 900);
+      }
+    });
+    return form;
+  }
 }
 
 function seedParticles(host, reduce) {
@@ -471,6 +649,21 @@ function injectCSS() {
   .sw-btn{text-decoration:none;font-weight:600;font-size:.95rem;padding:13px 24px;border-radius:999px;transition:transform .2s;}
   .sw-btn--primary{color:#fff;background:var(--sw-ink);} .sw-btn--primary:hover{transform:translateY(-2px);}
   .sw-btn--ghost{color:var(--sw-ink);border:1.5px solid color-mix(in srgb,var(--sw-ink) 25%,transparent);} .sw-btn--ghost:hover{transform:translateY(-2px);}
+  /* Lead capture panel (finale) */
+  .sw-capture{margin-top:24px;pointer-events:auto;width:min(42vw,420px);}
+  .sw-capture__h{font-family:var(--sw-font-display);font-weight:700;font-size:1.08rem;margin-bottom:4px;color:var(--sw-ink);}
+  .sw-capture__note{font-size:.9rem;color:var(--sw-ink-soft);margin-bottom:14px;}
+  .sw-capture__frame{width:100%;border:0;border-radius:16px;background:color-mix(in srgb,#fff 70%,transparent);box-shadow:0 12px 34px color-mix(in srgb,var(--sw-ink) 16%,transparent);}
+  .sw-capture__form{display:flex;flex-direction:column;gap:10px;}
+  .sw-capture__input{font:inherit;font-size:.95rem;padding:12px 15px;border-radius:12px;border:1.5px solid color-mix(in srgb,var(--sw-ink) 16%,transparent);background:color-mix(in srgb,#fff 80%,transparent);color:var(--sw-ink);}
+  .sw-capture__input:focus{outline:none;border-color:var(--sw-accent);box-shadow:0 0 0 3px color-mix(in srgb,var(--sw-accent) 22%,transparent);}
+  .sw-capture__form .sw-btn{border:0;cursor:pointer;text-align:center;margin-top:2px;}
+  .sw-capture__msg{font-size:.84rem;color:#c0392b;min-height:1em;}
+  .sw-capture__ok{font-size:1rem;font-weight:600;color:color-mix(in srgb,var(--sw-accent) 72%,#000);}
+  /* Audio unmute toggle */
+  .sw-audio{position:fixed;left:clamp(14px,3vw,28px);bottom:calc(24px + env(safe-area-inset-bottom));z-index:45;font:inherit;font-size:.78rem;font-weight:600;letter-spacing:.02em;color:var(--sw-ink);cursor:pointer;background:color-mix(in srgb,#fff 72%,transparent);backdrop-filter:blur(8px);border:1px solid color-mix(in srgb,var(--sw-accent) 22%,transparent);border-radius:999px;padding:9px 16px;transition:background .2s,color .2s;}
+  .sw-audio:hover{background:#fff;}
+  .sw-audio[aria-pressed="true"]{color:#fff;background:var(--sw-accent);border-color:transparent;}
   .sw-route{position:fixed;right:clamp(14px,2.4vw,30px);top:50%;z-index:40;transform:translateY(-50%);display:flex;flex-direction:column;gap:22px;padding:18px 10px;}
   .sw-route::before{content:"";position:absolute;left:50%;top:22px;bottom:22px;width:2px;transform:translateX(-50%);background:var(--sw-accent);opacity:.28;}
   .sw-route__dot{position:relative;border:0;background:transparent;cursor:pointer;width:14px;height:14px;display:grid;place-items:center;}
@@ -493,6 +686,8 @@ function injectCSS() {
     .sw-copy{bottom:calc(clamp(56px,12dvh,110px) + env(safe-area-inset-bottom));}
     .sw-copy__title{font-size:clamp(1.9rem,7.5vw,2.7rem);}
     .sw-copy__body{max-width:none;font-size:clamp(.98rem,3.6vw,1.1rem);} .sw-scene__video,.sw-scene__still{object-position:center 46%;}
+    .sw-capture{width:auto;max-width:none;}
+    .sw-audio{font-size:.72rem;padding:8px 13px;}
     .sw-hint{bottom:calc(20px + env(safe-area-inset-bottom));}
     .sw-route{gap:16px;right:6px;} .sw-route__label{display:none;}
   }

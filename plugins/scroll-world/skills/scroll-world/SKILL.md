@@ -9,7 +9,11 @@ description: >
   story beats/sections, and brand kit, then generates cohesive scenes + seamless camera
   clips with Higgsfield and wires a portable, framework-agnostic scroll-scrub engine.
   Use when the user wants a "3D world" / "browse-through-the-industry" hero, a scroll
-  cinematic, a diorama landing, or to turn a business into a scrollable world.
+  cinematic, a diorama landing, or to turn a business into a scrollable world. It also
+  wires opt-in conversion so the page isn't a dead end: GA4 flight analytics (scene /
+  scroll-depth / CTA / lead events for validation gates), GHL lead capture on the finale
+  (embedded form/calendar or an inline form to a GHL inbound webhook), and optional
+  ElevenLabs per-scene scroll audio.
 allowed-tools: Bash, Read, Write, Edit, AskUserQuestion, Skill
 ---
 
@@ -131,6 +135,19 @@ default. Cover:
      This is what Apple ships: the mobile asset is a differently-framed render, not a
      crop. Offer only when the user signals mobile traffic matters or the budget is
      loose.
+7. **Conversion wiring — ask, don't assume; a landing page that captures nothing is a
+   waste of the render spend.** These are opt-in and cost no generations. Cover:
+   - **Analytics** — a GA4 measurement id (`G-…`) if they want flight metrics. The engine
+     emits scene/scroll-depth/CTA/lead events; without an id, the page is analytically
+     blind. Default to asking for it.
+   - **Lead capture** — where the finale CTA should go. Best options: a GHL **form or
+     booking widget** to embed (get its iframe URL), or an **inline form → GHL inbound
+     webhook** (get the webhook URL) with a source tag for their pipeline. Without this the
+     finale is a dead `#` link.
+   - **Audio (optional)** — do they want per-scene narration/ambient (ElevenLabs)? Off by
+     default; it adds production cost and weight. Only if they ask.
+   Full recipes (GA4 event schema + validation-gate mapping, GHL setup, ElevenLabs
+   encoding) are in `references/integrations.md`; wire them in Step 9.
 
 Video model is **not** an interview question — default `seedance_2_0` silently. If the user
 names a preference, honor it **only if it can frame-lock seams** (Step 4 roster:
@@ -459,10 +476,14 @@ framework. It's config-driven and self-contained:
 mountScrollWorld(document.getElementById('world'), {
   brand: { name: 'Pearl & Co.' },
   diveScroll: 1.3, connScroll: 0.9,          // viewport-heights of scroll per clip
+  analytics: { ga4: 'G-XXXXXXX' },           // opt-in flight events → validation gates (Step 9)
+  capture: { mode:'embed', embedUrl:'…GHL form/calendar iframe…' },  // finale lead capture (Step 9)
+  audio: { unmuteLabel:'Play sound', onLabel:'Mute' },  // opt-in; + per-section `audio:'…mp3'` (Step 9)
   sections: [
     { id:'farm', label:'The Farms', still:'assets/farm.webp',
       poster:'assets/farm-poster.webp',          // encoded clip's extracted first frame (Step 6)
       clip:'assets/vid/farm.mp4', clipMobile:'assets/vid/farm-m.mp4',   // mobile beta only
+      audio:'assets/aud/farm.mp3',   // optional per-scene narration/ambient (fades with the scene)
       scroll: 1.6, linger: 0.45,   // optional pacing: longer dwell + camera settles mid-scene
       accent:'#8FB98A', eyebrow:'From leaf to last sip', title:'It starts in the hills.',
       body:'…', tags:['Single-origin','Hand-picked'] },
@@ -558,6 +579,42 @@ end-to-end:
     hero scene's subject sits off-centre and gets cut, recompose it (prompts.md) or generate
     a 9:16 variant for that scene.
 - Check reduced-motion (should fall back to the stills, no video, no particles).
+- **Conversion (if wired — see Step 9):** with `analytics: { …, debug:true }`, scroll top→
+  bottom and confirm the console logs `sw_scene_view`, `sw_scroll_depth` 25→100, and
+  `sw_flight_complete`; click the CTA (`sw_cta_click`). Then submit the capture form once
+  against the **real** GHL endpoint and confirm both the thank-you message **and** a tagged
+  contact landing in the right pipeline — never ship an unverified webhook. Audio (if used):
+  tap unmute, confirm the active scene's narration plays and fades as you scroll on.
+
+---
+
+## Step 9 — Conversion & deploy (don't ship a dead end)
+
+The render spend buys a beautiful page; this step makes it *earn*. All three are opt-in and
+cost zero generations. Full recipes — GA4 event schema + validation-gate mapping, GHL form/
+webhook setup with source tagging, ElevenLabs narration encoding — are in
+`references/integrations.md`.
+
+1. **Analytics.** Pass `analytics:{ ga4:'G-…' }` (engine injects gtag) or `{ ga4:true }` (you
+   already placed a GA4/GTM snippet). The engine emits `sw_scene_view`, `sw_scroll_depth`,
+   `sw_flight_complete`, `sw_cta_click`, `sw_lead_submit`. Mark `sw_lead_submit` a **Key
+   Event** in GA4. Read the numbers as gates: completion = `flight_complete` rate,
+   engagement/intent = `cta_click` + `lead_submit` rate.
+2. **Lead capture** (the finale). `capture:{ mode:'embed', embedUrl:'…' }` drops in a GHL
+   form or booking widget (GHL owns submission + routing — simplest, recommended), or
+   `capture:{ mode:'inline', webhookUrl:'…', source:'…' }` renders an on-brand form that
+   POSTs name/email/phone + UTMs to a GHL **inbound webhook**, honeypot-guarded, with a
+   source tag for the pipeline. **Never put a GHL API key in the page** — the webhook URL is
+   a public inbound endpoint and is the only credential that belongs client-side.
+3. **Audio (optional).** `audio:{ unmuteLabel:'Play sound' }` + per-section `audio:'…mp3'`.
+   Muted until the visitor taps unmute (autoplay policy); each scene's volume then follows
+   its opacity, so narration cross-fades with the flight. Off automatically under
+   reduced-motion / data-saver. Keep files small (mono ~96 kbps).
+4. **Deploy.** The page is static HTML + `scrub-engine.js` + `assets/`: `vercel --prod` from
+   the page dir, or drop the engine into a Lovable/Next/Vue route and server-render the
+   `data-sw-seo` block. Set the GA4 id and GHL URL **before** deploy (they aren't secrets),
+   then fire one live test lead and confirm it lands as a tagged contact in the right
+   pipeline before calling it done.
 
 ---
 
@@ -597,7 +654,10 @@ most often:
   `data-sw-seo` static-copy block, copy, route rail, reduced-motion, and phone hardening:
   mobile encodes, seek-coalescing, iOS priming, safe-area, no-jump resize).
 - `references/index-template.html` — a minimal standalone page that mounts the engine,
-  including the crawlable `data-sw-seo` copy block.
+  including the crawlable `data-sw-seo` copy block and the opt-in conversion config.
 - `references/knockout.py` — border-connected background knockout for floating scenes.
 - `references/gotchas.md` — the full symptom → cause → fix list, plus the canvas
   frame-sequence alternative for when video scrubbing isn't smooth enough.
+- `references/integrations.md` — Step 9 conversion recipes: GA4 flight-event schema +
+  validation-gate mapping, GHL lead capture (embedded widget or inline → inbound webhook
+  with source tagging), ElevenLabs scroll-audio setup, and Vercel / framework deploy.
