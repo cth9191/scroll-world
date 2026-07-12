@@ -80,3 +80,40 @@ sections: [{ poster, posterMobile, /* + everything upstream */ }],
 
 All verified headless (Chromium): desktop / phone / tablet / data-saver / Low Power
 Mode scenarios, plus SEO-hide, poster preference, and scroll-factor math.
+
+## 6. Conversion — the page stops being a dead end (v0.3.0)
+
+Upstream (and the earlier fork) ship a gorgeous page whose finale CTA is `href:'#'`,
+with nothing measured and nothing captured. This adds three opt-in layers so a shipped
+page actually earns; every field defaults off and an existing config runs unchanged.
+
+- **GA4 flight analytics** (`analytics:{ ga4, prefix, debug, params }`). A scroll page is
+  analytically blind by default; the engine now emits `sw_scene_view`, `sw_scroll_depth`
+  (25/50/75/100, once each), `sw_flight_complete`, `sw_cta_click`, `sw_lead_submit`,
+  `sw_audio_toggle` to `gtag()` — or `window.dataLayer` (GTM) when gtag is absent. Pass a
+  `G-…` id to auto-inject gtag, or `true` to reuse an existing snippet. Documented mapping
+  from events → completion/engagement validation gates.
+- **GHL lead capture on the finale** (`capture:{…}`). `mode:'embed'` drops a GHL
+  form/booking iframe; `mode:'inline'` renders an on-brand form that POSTs name/email/phone
+  + UTM/gclid/fbclid + source/brand/page to a GHL **inbound webhook** — honeypot-guarded,
+  required-field checked, `no-cors` fire-and-trust, success → `sw_lead_submit` + thank-you.
+  Security rule stated in-code: the webhook URL is the only (public) credential; **no GHL
+  API key ever goes client-side.**
+- **ElevenLabs scroll audio** (`audio:{…}` + per-section `audio:'…mp3'`). Per-scene volume
+  tracks scene opacity, so narration cross-fades with the flight. Muted until an unmute tap
+  (autoplay policy); never instantiated under reduced-motion / data-saver (`preload:'none'`
+  → zero bytes for muted visitors).
+- **New doc**: `references/integrations.md` (GA4/GHL/ElevenLabs recipes + Vercel/framework
+  deploy). SKILL.md gains interview item 7 (conversion) and
+  Step 9 (conversion & deploy). `index-template.html` shows the opt-in config + GA4 snippet.
+
+```js
+analytics: { ga4: 'G-XXXXXXX' },
+capture:   { mode:'embed', embedUrl:'…GHL widget…' },   // or mode:'inline', webhookUrl, source
+audio:     { unmuteLabel:'Play sound' },                // + per-section `audio:'…mp3'`
+```
+
+Verified: engine syntax (`node --check`), in-browser mount + capture-form submit →
+`sw_lead_submit` + thank-you, `sw_cta_click`, `sw_audio_toggle`, `sw_scene_view`, SEO
+still hidden; scroll-depth threshold logic (25→100 once each + `flight_complete`,
+idempotent under up/down scroll) verified deterministically.
