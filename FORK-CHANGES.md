@@ -36,6 +36,11 @@ the interview — a style miss or mid-run crash burns real credits.
   `posterMobile`): upstream uses the 3:2 source still as the loading poster for a 16:9
   re-rendered clip — visible jump on the first paint a visitor sees. Same frame-handoff
   doctrine as the connectors, applied to seam zero.
+- **Exact-frame handoffs for architecture A** (`§3` note, gotchas): the -0.15s "last
+  frame" extraction is a connector recipe; used as an arch-A chain handoff it plays as a
+  ~4-frame rewind at every seam (measured SSIM 0.59 vs ≈0.90+ with the true last frame
+  via `-update 1`). Found by running the chain on a local Wan 2.2 5B pipeline, where the
+  SSIM gate flagged it — the gate doing exactly its job.
 
 ## 3. Mobile (research-backed: live apple.com asset probes, OPTIKKA/Shopify/Horeca
 case studies, caniuse/MDN support tables)

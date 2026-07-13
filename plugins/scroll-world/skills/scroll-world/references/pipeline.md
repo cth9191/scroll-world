@@ -127,6 +127,16 @@ for n in "$@"; do
 done
 ```
 
+**Architecture A: the chain handoff must be the TRUE last frame — not the -0.15s frame
+above.** The -0.15s offset is fine for a connector's *start-image* (the model re-renders
+anyway), but when the next leg literally continues from the frame, starting ~4 frames
+early plays back as a rewind at the seam (measured: exact frame → seam SSIM ≈0.90+;
+-0.15s → 0.59). Extract the exact final frame with the `-update` trick:
+
+```bash
+ffmpeg -v error -y -sseof -0.3 -i "$WORK/leg_$prev.mp4" -update 1 -q:v 2 "$WORK/last_$prev.png"
+```
+
 ## 4. Connector clips (Step 5)
 
 Prompt files at `$WORK/conn_<i>.txt` (i = 1..N-1). Iterate adjacent pairs:
@@ -192,8 +202,9 @@ near-identical across its boundary frames. SSIM-check them all from the encoded 
 
 ```bash
 # last frame of A vs first frame of B, SSIM score on stdout
+# (-update 1 = exact final frame; approximate seeks under-score high-motion seams)
 seam_ssim() { # fileA fileB
-  ffmpeg -v error -y -sseof -0.05 -i "$1" -frames:v 1 "$WORK/_sa.png"
+  ffmpeg -v error -y -sseof -0.3 -i "$1" -update 1 "$WORK/_sa.png"
   ffmpeg -v error -y -ss 0      -i "$2" -frames:v 1 "$WORK/_sb.png"
   ffmpeg -v info -i "$WORK/_sa.png" -i "$WORK/_sb.png" -lavfi ssim -f null - 2>&1 \
     | grep -o 'All:[0-9.]*' | cut -d: -f2

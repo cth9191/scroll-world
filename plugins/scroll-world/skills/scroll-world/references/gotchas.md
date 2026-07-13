@@ -82,6 +82,13 @@ list. Symptom → cause → fix.
   start-image-only model where a connector needs an `--end-image`. One model for the whole
   chain; the only cheap tier is `seedance_2_0_mini`, which keeps frame-locking so it stays
   seamless. (Any model with reference-only inputs can't hold a seam at all — SKILL Step 4.)
+- **Arch-A seam scores SSIM 0.6–0.8 even though the legs were chained** → the next leg's
+  start image was extracted with the *connector* recipe (`-sseof -0.15 … -frames:v 1`),
+  which lands ~4 frames before the end — at playback the seam rewinds those frames. For
+  architecture-A chaining the handoff must be the clip's TRUE last frame:
+  `ffmpeg -sseof -0.3 -i leg.mp4 -update 1 -q:v 2 last.png` (overwrites until EOF).
+  Measured on a local Wan 2.2 5B chain: exact frame → seam ≈0.90+; -0.15s offset → 0.59.
+  Use the same exact-frame extraction on the A-side of the §5c SSIM check.
 - **White-box scenes** → `gpt_image_2` returns a solid bg; either match the page bg to it
   or knock it out (SKILL Step 3).
 - **bash 3.2** on macOS → no associative arrays in scripts.
